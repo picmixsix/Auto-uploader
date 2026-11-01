@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 TG = os.environ.get('TG_TOKEN', '')
 API = f'https://api.telegram.org/bot{TG}'
-GV = 'https://graph.facebook.com/v21.0'
+GV = 'https://graph.facebook.com/v25.0'
 
 
 def load(f, d):
@@ -51,31 +51,53 @@ def post(page, tok, x):
     f = requests.post(f'{GV}/{page}/video_reels', data={'upload_phase': 'finish', 'video_id': a['video_id'],
                       'video_state': 'PUBLISHED', 'description': d, 'access_token': tok}).json()
     if not f.get('success'): raise Exception(f)
+    st = {}
+    for _ in range(12):  # tunggu Facebook memproses video, maks ~2 menit
+        time.sleep(10)
+        st = requests.get(f"{GV}/{a['video_id']}", params={'fields': 'status', 'access_token': tok}).json().get('status', {})
+        if st.get('video_status') in ('ready', 'error', 'upload_failed', 'expired'): break
+    if st.get('video_status') in ('error', 'upload_failed', 'expired'): raise Exception('Facebook: ' + json.dumps(st)[:250])
     if x.get('comment'):
-        time.sleep(25)
         c = requests.post(f"{GV}/{a['video_id']}/comments", data={'message': x['comment'], 'access_token': tok}).json()
         if 'id' not in c: return 'ok (komentar gagal)'
     return 'ok'
 
 
+def status(ok, msg):
+    s = load('status.json', {})
+    s['fetch'] = {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'ok': ok, 'msg': msg}
+    save('status.json', s)
+
+
 def fetch():
     pull()
-    s = load('stock.json', {'offset': 0, 'items': []})
-    chat = os.environ.get('TG_CHAT_ID')
-    for u in requests.get(API + '/getUpdates', params={'offset': s['offset']}).json().get('result', []):
-        s['offset'] = u['update_id'] + 1
-        m = u.get('message') or {}
-        v = m.get('video') or (m.get('document') if 'video' in (m.get('document') or {}).get('mime_type', '') else None)
-        if not v or (chat and str(m['chat']['id']) != chat): continue
-        i = v['file_unique_id']
-        if any(k['id'] == i for k in s['items']): continue
-        t = (v.get('thumbnail') or v.get('thumb') or {}).get('file_id')
-        if t:
-            os.makedirs('thumbs', exist_ok=True)
-            tgfile(t, f'thumbs/{i}.jpg')
-        s['items'].append({'id': i, 'file_id': v['file_id'], 'caption': m.get('caption', ''),
-                           'duration': v.get('duration', 0), 'size': v.get('file_size', 0), 'thumb': bool(t)})
-    save('stock.json', s)
+    try:
+        s = load('stock.json', {'offset': 0, 'items': []})
+        chat = os.environ.get('TG_CHAT_ID'); n = skip = other = 0
+        r = requests.get(API + '/getUpdates', params={'offset': s['offset']}).json()
+        if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')) + ' (jika 409: ada bot lain yang memakai token ini)')
+        for u in r['result']:
+            s['offset'] = u['update_id'] + 1
+            m = u.get('message') or u.get('channel_post') or {}
+            v = m.get('video') or (m.get('document') if 'video' in (m.get('document') or {}).get('mime_type', '') else None)
+            if not v: other += 1; continue
+            if chat and str(m['chat']['id']) != chat: skip += 1; continue
+            i = v['file_unique_id']
+            if any(k['id'] == i for k in s['items']): continue
+            t = (v.get('thumbnail') or v.get('thumb') or {}).get('file_id')
+            if t:
+                os.makedirs('thumbs', exist_ok=True)
+                tgfile(t, f'thumbs/{i}.jpg')
+            s['items'].append({'id': i, 'file_id': v['file_id'], 'caption': m.get('caption', ''),
+                               'duration': v.get('duration', 0), 'size': v.get('file_size', 0), 'thumb': bool(t)})
+            n += 1
+        save('stock.json', s)
+        msg = f"{n} video baru, stok {len(s['items'])}"
+        if skip: msg += f", {skip} video diabaikan karena Chat ID tidak cocok"
+        if other: msg += f", {other} pesan bukan video"
+        status(True, msg)
+    except Exception as e:
+        status(False, str(e)[:200])
     git('bot: ambil video telegram')
 
 
