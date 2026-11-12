@@ -55,7 +55,8 @@ def post(page, tok, x, name=''):
     r = requests.post(a['upload_url'], headers={'Authorization': 'OAuth ' + tok, 'offset': '0', 'file_size': str(n)},
                       data=open('v.mp4', 'rb'))
     if r.status_code != 200: raise Exception(r.text)
-    d = tag((x.get('description', '') + '\n\n' + x.get('hashtags', '')).strip(), name, x['id'])
+    d = (x.get('description', '') + '\n\n' + x.get('hashtags', '')).strip()
+    d = tag(d if BASE in d else (d + '\n\n' + BASE).strip(), name, x['id'])
     f = requests.post(f'{GV}/{page}/video_reels', data={'upload_phase': 'finish', 'video_id': a['video_id'],
                       'video_state': 'PUBLISHED', 'description': d, 'access_token': tok}).json()
     if not f.get('success'): raise Exception(f)
