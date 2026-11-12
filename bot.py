@@ -1,4 +1,4 @@
-import os, sys, json, time, base64, random, datetime as dt, requests
+import os, sys, json, time, base64, random, re, datetime as dt, requests
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 TG = os.environ.get('TG_TOKEN', '')
 API = f'https://api.telegram.org/bot{TG}'
 GV = 'https://graph.facebook.com/v25.0'
+BASE = 'https://part-selanjutnya.github.io/Klik-disini'
 
 
 def load(f, d):
@@ -40,14 +41,21 @@ def dec(t):
     return AESGCM(k).decrypt(b[:12], b[12:], None).decode()
 
 
-def post(page, tok, x):
+def kode(n): return re.sub(r'[^a-z0-9]+', '-', n.lower()).strip('-')
+
+
+def tag(t, name, vid):
+    return re.sub(re.escape(BASE) + r'/?(\?\S*)?', f'{BASE}/?p={kode(name)}&v={vid[:6]}', t or '')
+
+
+def post(page, tok, x, name=''):
     n = os.path.getsize('v.mp4')
     a = requests.post(f'{GV}/{page}/video_reels', data={'upload_phase': 'start', 'access_token': tok}).json()
     if 'video_id' not in a: raise Exception(a)
     r = requests.post(a['upload_url'], headers={'Authorization': 'OAuth ' + tok, 'offset': '0', 'file_size': str(n)},
                       data=open('v.mp4', 'rb'))
     if r.status_code != 200: raise Exception(r.text)
-    d = (x.get('description', '') + '\n\n' + x.get('hashtags', '')).strip()
+    d = tag((x.get('description', '') + '\n\n' + x.get('hashtags', '')).strip(), name, x['id'])
     f = requests.post(f'{GV}/{page}/video_reels', data={'upload_phase': 'finish', 'video_id': a['video_id'],
                       'video_state': 'PUBLISHED', 'description': d, 'access_token': tok}).json()
     if not f.get('success'): raise Exception(f)
@@ -58,7 +66,7 @@ def post(page, tok, x):
         if st.get('video_status') in ('ready', 'error', 'upload_failed', 'expired'): break
     if st.get('video_status') in ('error', 'upload_failed', 'expired'): raise Exception('Facebook: ' + json.dumps(st)[:250])
     if x.get('comment'):
-        c = requests.post(f"{GV}/{a['video_id']}/comments", data={'message': x['comment'], 'access_token': tok}).json()
+        c = requests.post(f"{GV}/{a['video_id']}/comments", data={'message': tag(x['comment'], name, x['id']), 'access_token': tok}).json()
         if 'id' not in c: return 'ok (komentar gagal)'
     return 'ok'
 
@@ -127,7 +135,7 @@ def run():
                 if str(res.get(pid, '')).startswith('ok'): continue
                 p = pages.get(pid)
                 if not p: res[pid] = 'fanspage sudah dihapus'; continue
-                try: res[pid] = post(pid, dec(p['token']), x)
+                try: res[pid] = post(pid, dec(p['token']), x, p.get('name', pid))
                 except Exception as e: res[pid] = 'gagal: ' + str(e)[:200]
                 time.sleep(random.randint(30, 120))  # jeda acak antar fanspage
             x['results'] = res
