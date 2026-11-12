@@ -3,10 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: fetch atau run
+        description: fetch, run, atau report
         default: run
+  schedule:
+    - cron: '*/15 * * * *'
+    - cron: '0 13 * * *'
 concurrency:
-  group: bot
+  group: bot-${{ github.event.schedule == '0 13 * * *' && 'report' || 'main' }}
   cancel-in-progress: false
 permissions:
   contents: write
@@ -20,7 +23,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests cryptography
-      - run: python bot.py ${{ inputs.task }}
+      - run: |
+          T="${{ inputs.task }}"
+          if [ -z "$T" ]; then
+            if [ "${{ github.event.schedule }}" = "0 13 * * *" ]; then T=report; else T=run; fi
+          fi
+          if [ "$T" = "report" ]; then python report.py; else python bot.py "$T"; fi
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
