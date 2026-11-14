@@ -89,10 +89,11 @@ def status(ok, msg):
 
 
 def parse_product(cap):
-    m = re.search(r'https?://\S+', cap or '')
+    m = re.search(r'https?://\S+', cap or '', re.I)
     if not m or '|' not in cap: return None
-    link = m.group(0)
-    lines = [l.strip() for l in cap.replace(link, '').splitlines() if l.strip()]
+    raw = m.group(0)
+    link = re.sub(r'^https?', lambda x: x.group(0).lower(), raw, flags=re.I)
+    lines = [l.strip() for l in cap.replace(raw, '').splitlines() if l.strip()]
     fi = next((i for i, l in enumerate(lines) if '|' in l), None)
     if fi is None: return None
     parts = [x.strip() for x in lines[fi].split('|') if x.strip()]
@@ -163,7 +164,7 @@ def render_product(p):
     d = '/tmp/r' + re.sub(r'\W', '', p['id'])[:14]
     os.makedirs(d, exist_ok=True)
     ph = []
-    for i, fid in enumerate(p['photos'][:5]):
+    for i, fid in enumerate(p['photos'][:8]):
         tgfile(fid, f'{d}/p{i}.jpg'); ph.append(f'{d}/p{i}.jpg')
     cfg = load('auto.json', {})
     out = f'{d}/out.mp4'
