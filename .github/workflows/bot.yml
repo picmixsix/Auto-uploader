@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install requests cryptography
+      - run: pip install requests cryptography pillow
       - run: |
           T="${{ inputs.task }}"
           if [ -z "$T" ]; then
