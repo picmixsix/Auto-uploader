@@ -63,12 +63,18 @@ def post(page, tok, x, name=''):
     st = {}
     for _ in range(12):  # tunggu Facebook memproses video, maks ~2 menit
         time.sleep(10)
-        st = requests.get(f"{GV}/{a['video_id']}", params={'fields': 'status', 'access_token': tok}).json().get('status', {})
+        try:
+            st = requests.get(f"{GV}/{a['video_id']}", params={'fields': 'status', 'access_token': tok}).json().get('status', {})
+        except Exception:
+            break  # video sudah terkirim, jangan diulang hanya karena gagal mengecek status
         if st.get('video_status') in ('ready', 'error', 'upload_failed', 'expired'): break
     if st.get('video_status') in ('error', 'upload_failed', 'expired'): raise Exception('Facebook: ' + json.dumps(st)[:250])
     if x.get('comment'):
-        c = requests.post(f"{GV}/{a['video_id']}/comments", data={'message': tag(x['comment'], name, x['id']), 'access_token': tok}).json()
-        if 'id' not in c: return 'ok (komentar gagal)'
+        try:
+            c = requests.post(f"{GV}/{a['video_id']}/comments", data={'message': tag(x['comment'], name, x['id']), 'access_token': tok}).json()
+            if 'id' not in c: return 'ok (komentar gagal)'
+        except Exception:
+            return 'ok (komentar gagal)'
     return 'ok'
 
 
@@ -78,7 +84,7 @@ def status(ok, msg):
     save('status.json', s)
 
 
-def fetch():
+def fetch(quiet=False):
     pull()
     try:
         s = load('stock.json', {'offset': 0, 'items': []})
@@ -104,7 +110,7 @@ def fetch():
         msg = f"{n} video baru, stok {len(s['items'])}"
         if skip: msg += f", {skip} video diabaikan karena Chat ID tidak cocok"
         if other: msg += f", {other} pesan bukan video"
-        status(True, msg)
+        if not quiet or n or skip or other: status(True, msg)
     except Exception as e:
         status(False, str(e)[:200])
     git('bot: ambil video telegram')
@@ -115,6 +121,80 @@ def clean(*lists):
     if os.path.isdir('thumbs'):
         for f in os.listdir('thumbs'):
             if f[:-4] not in ref: os.remove('thumbs/' + f)
+
+
+def gemini(x, cfg):
+    base = {'description': x.get('caption', ''), 'hashtags': '', 'comment': ''}
+    key = os.environ.get('GEMINI_KEY', '')
+    if not key: return base
+    try:
+        parts = [{'text': 'Kamu ahli Facebook Reels Indonesia. Teks bawaan video: "' + (x.get('caption') or '-') +
+                  '". Lihat gambar cuplikan video ini, lalu balas JSON {"description","hashtags","comment"}: '
+                  'deskripsi menarik maksimal 150 karakter yang sesuai isi video (jangan menjanjikan hal yang tidak ada di video), '
+                  '3-5 tagar relevan, dan komentar pertama yang mengajak berinteraksi. Bahasa Indonesia.'}]
+        try:
+            d = base64.b64encode(open(f"thumbs/{x['id']}.jpg", 'rb').read()).decode()
+            parts.append({'inline_data': {'mime_type': 'image/jpeg', 'data': d}})
+        except Exception: pass
+        model = cfg.get('model', 'gemini-2.5-flash')
+        for i in range(2):
+            r = requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+                              params={'key': key}, timeout=90,
+                              json={'contents': [{'parts': parts}], 'generationConfig': {'responseMimeType': 'application/json'}})
+            if r.status_code == 404 and i == 0:
+                m = requests.get('https://generativelanguage.googleapis.com/v1beta/models',
+                                 params={'pageSize': 200, 'key': key}, timeout=30).json()
+                c = sorted([k['name'].replace('models/', '') for k in m.get('models', [])
+                            if 'generateContent' in k.get('supportedGenerationMethods', []) and 'flash' in k['name']
+                            and not re.search('lite|image|tts|live|audio|preview|exp', k['name'])], reverse=True)
+                if c: model = c[0]; continue
+            break
+        o = json.loads(r.json()['candidates'][0]['content']['parts'][0]['text'])
+        h = o.get('hashtags', '')
+        return {'description': o.get('description', ''), 'hashtags': ' '.join(h) if isinstance(h, list) else h,
+                'comment': o.get('comment', '')}
+    except Exception:
+        return base
+
+
+def auto():
+    cfg = load('auto.json', {})
+    if not cfg.get('enabled'): return
+    fetch(quiet=True)
+    pull()
+    stock = load('stock.json', {'offset': 0, 'items': []})
+    queue = load('queue.json', [])
+    pages = sorted(str(p['id']) for p in load('pages.json', []))
+    want = cfg.get('pages', 'all')
+    if isinstance(want, list): pages = [p for p in pages if p in [str(w) for w in want]]
+    if not pages or not stock['items']: return
+    now = dt.datetime.now(dt.timezone.utc)
+    wib = dt.timezone(dt.timedelta(hours=7))
+    taken = {x.get('slot') for x in queue if x.get('slot')}
+    st = load('autostate.json', {'cursor': 0})
+    k = max(1, min(int(cfg.get('pages_per_video', 3)), len(pages)))
+    slots = []
+    for d in range(int(cfg.get('days_ahead', 2)) + 1):
+        day = (now.astimezone(wib) + dt.timedelta(days=d)).date()
+        for s in cfg.get('slots', ['12:00', '17:00', '20:00']):
+            h, m = map(int, s.split(':'))
+            t = dt.datetime(day.year, day.month, day.day, h, m, tzinfo=wib).astimezone(dt.timezone.utc)
+            if t > now + dt.timedelta(minutes=15): slots.append(t)
+    n = 0
+    for t in sorted(slots):
+        key = t.isoformat()
+        if key in taken: continue
+        v = next((x for x in stock['items'] if x.get('size', 0) <= 20000000), None)
+        if not v: break
+        stock['items'].remove(v)
+        sel = [pages[(st['cursor'] + i) % len(pages)] for i in range(k)]
+        st['cursor'] = (st['cursor'] + k) % len(pages)
+        at = t + dt.timedelta(minutes=random.randint(0, 20))
+        queue.append({**v, **gemini(v, cfg), 'pages': sel, 'at': at.isoformat(), 'slot': key, 'status': 'pending'})
+        n += 1
+    if n:
+        save('stock.json', stock); save('queue.json', queue); save('autostate.json', st)
+        git(f'bot: autopilot jadwalkan {n} video')
 
 
 def run():
@@ -136,8 +216,13 @@ def run():
                 if str(res.get(pid, '')).startswith('ok'): continue
                 p = pages.get(pid)
                 if not p: res[pid] = 'fanspage sudah dihapus'; continue
-                try: res[pid] = post(pid, dec(p['token']), x, p.get('name', pid))
-                except Exception as e: res[pid] = 'gagal: ' + str(e)[:200]
+                for t in range(3):  # coba ulang otomatis, maksimal 3 kali
+                    try:
+                        res[pid] = post(pid, dec(p['token']), x, p.get('name', pid)); break
+                    except Exception as e:
+                        res[pid] = 'gagal: ' + str(e)[:200]
+                        if 'OAuth' in str(e) or t == 2: break  # token bermasalah tidak perlu diulang
+                        time.sleep(60)
                 time.sleep(random.randint(30, 120))  # jeda acak antar fanspage
             x['results'] = res
             x['status'] = 'done' if all(str(v).startswith('ok') for v in res.values()) else 'failed'
@@ -157,4 +242,9 @@ def run():
     git('bot: selesai upload')
 
 
-{'fetch': fetch, 'run': run}[sys.argv[1]]()
+def jalan():
+    auto()
+    run()
+
+
+{'fetch': fetch, 'run': jalan}[sys.argv[1]]()
