@@ -33,3 +33,4 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           PAGES_KEY: ${{ secrets.PAGES_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
