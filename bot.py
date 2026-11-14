@@ -1,4 +1,4 @@
-import os, sys, json, time, base64, random, re, datetime as dt, requests
+import os, sys, json, time, base64, random, re, hashlib, datetime as dt, requests
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -7,8 +7,6 @@ TG = os.environ.get('TG_TOKEN', '')
 API = f'https://api.telegram.org/bot{TG}'
 GV = 'https://graph.facebook.com/v25.0'
 BASE = 'https://part-selanjutnya.github.io/Klik-disini'
-FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-ZP = "zoompan=z='min(zoom+0.0006,1.07)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=90:s=1080x1920:fps=30,format=yuv420p"
 
 
 def load(f, d):
@@ -94,11 +92,14 @@ def parse_product(cap):
     m = re.search(r'https?://\S+', cap or '')
     if not m or '|' not in cap: return None
     link = m.group(0)
-    parts = [x.strip() for x in cap.replace(link, '').split('|')]
-    parts = [x for x in parts if x]
+    lines = [l.strip() for l in cap.replace(link, '').splitlines() if l.strip()]
+    fi = next((i for i, l in enumerate(lines) if '|' in l), None)
+    if fi is None: return None
+    parts = [x.strip() for x in lines[fi].split('|') if x.strip()]
     if len(parts) < 3: return None
+    narasi = ' '.join(l for i, l in enumerate(lines) if i != fi)
     return {'name': parts[0], 'price': parts[1],
-            'points': [x.strip() for x in parts[2].split(';') if x.strip()], 'link': link}
+            'points': [x.strip() for x in parts[2].split(';') if x.strip()], 'link': link, 'narasi': narasi}
 
 
 def fetch(quiet=False):
@@ -122,7 +123,7 @@ def fetch(quiet=False):
                     continue
                 pr = parse_product(cap)
                 if not pr: other += 1; continue
-                i = ph[-1]['file_unique_id']
+                i = ph[-1]['file_unique_id'] + '-' + hashlib.md5(cap.encode()).hexdigest()[:4]
                 if any(q['id'] == i for q in prods): continue
                 prods.append({**pr, 'id': i, 'gid': gid, 'photos': [ph[-1]['file_id']], 'status': 'new'})
                 np_ += 1
@@ -157,81 +158,33 @@ def clean(*lists):
             if f[:-4] not in ref: os.remove('thumbs/' + f)
 
 
-def wrap(d, text, font, width):
-    out, cur = [], ''
-    for w in text.split():
-        t = (cur + ' ' + w).strip()
-        if d.textlength(t, font=font) <= width: cur = t
-        else:
-            if cur: out.append(cur)
-            cur = w
-    if cur: out.append(cur)
-    return out
-
-
-def scene(photo, top, bot, path):
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-    W, H = 1080, 1920
-    im = Image.open(photo).convert('RGB')
-    s = max(W / im.width, H / im.height)
-    bg = im.resize((int(im.width * s) + 1, int(im.height * s) + 1))
-    bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width + W) // 2, (bg.height + H) // 2))
-    bg = bg.filter(ImageFilter.GaussianBlur(40)).point(lambda v: int(v * 0.45))
-    k = min(920 / im.width, 900 / im.height)
-    fg = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))))
-    bg.paste(fg, ((W - fg.width) // 2, 430 + (900 - fg.height) // 2))
-    d = ImageDraw.Draw(bg)
-
-    def put(text, size, y, fill):
-        f = ImageFont.truetype(FONT, size)
-        for ln in wrap(d, text, f, 960):
-            x = (W - d.textlength(ln, font=f)) / 2
-            d.text((x + 3, y + 3), ln, font=f, fill='black')
-            d.text((x, y), ln, font=f, fill=fill)
-            y += int(size * 1.25)
-
-    put(top[0], top[1], 200, 'yellow')
-    put(bot[0], bot[1], 1400, 'white')
-    bg.save(path)
-    return bg
-
-
 def render_product(p):
-    d = '/tmp/r' + re.sub(r'\W', '', p['id'])[:10]
+    import studio
+    d = '/tmp/r' + re.sub(r'\W', '', p['id'])[:14]
     os.makedirs(d, exist_ok=True)
     ph = []
     for i, fid in enumerate(p['photos'][:5]):
         tgfile(fid, f'{d}/p{i}.jpg'); ph.append(f'{d}/p{i}.jpg')
-    sc = [(('REKOMENDASI HARI INI', 56), (p['name'][:90], 72)), (('HARGA', 56), (p['price'][:30], 120))]
-    for t in p['points'][:4]: sc.append((('KEUNGGULAN', 56), ('✔ ' + t[:80], 68)))
-    sc.append((('MAU TAHU LEBIH LANJUT?', 56), ('Link ada di komentar pertama', 72)))
-    lst = []
-    for i, (top, bot) in enumerate(sc):
-        png, mp = f'{d}/s{i}.png', f'{d}/s{i}.mp4'
-        img = scene(ph[i % len(ph)], top, bot, png)
-        if i == 0:
-            os.makedirs('thumbs', exist_ok=True)
-            img.resize((540, 960)).save(f"thumbs/{p['id']}.jpg")
-        if os.system(f'ffmpeg -y -loglevel error -i {png} -vf "{ZP}" -c:v libx264 -preset veryfast {mp}') != 0:
-            raise Exception('ffmpeg gagal membuat adegan')
-        lst.append(f"file '{mp}'")
-    open(f'{d}/list.txt', 'w').write('\n'.join(lst))
+    cfg = load('auto.json', {})
     out = f'{d}/out.mp4'
-    if os.system(f'ffmpeg -y -loglevel error -f concat -safe 0 -i {d}/list.txt -f lavfi -i anullsrc=r=44100:cl=stereo '
-                 f'-shortest -c:v copy -c:a aac -movflags +faststart {out}') != 0:
-        raise Exception('ffmpeg gagal menggabungkan video')
-    chat = os.environ.get('TG_CHAT_ID')
-    r = requests.post(API + '/sendVideo', data={'chat_id': chat, 'supports_streaming': 'true', 'width': 1080, 'height': 1920},
+    info = studio.make_video(p, ph, out, f"thumbs/{p['id']}.jpg", voice=cfg.get('voice', 'id-ID-GadisNeural'),
+                             music=cfg.get('music', True), work=d + '/w')
+    size = os.path.getsize(out)
+    if size > 19000000: raise Exception('video terlalu besar (%.1f MB)' % (size / 1e6))
+    warn = '; '.join(info['warn'])
+    cap = 'Pratinjau: ' + p['name'][:80] + (('\n⚠ ' + warn) if warn else '')
+    r = requests.post(API + '/sendVideo', data={'chat_id': os.environ.get('TG_CHAT_ID'), 'supports_streaming': 'true',
+                      'width': 1080, 'height': 1920, 'caption': cap[:1000]},
                       files={'video': open(out, 'rb')}, timeout=300).json()
     if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')))
     v = r['result']['video']
-    return v['file_id'], v.get('duration', 0), v.get('file_size', os.path.getsize(out))
+    return v['file_id'], v.get('duration', 0), v.get('file_size', size)
 
 
 def render():
     pull()
     prods = load('products.json', [])
-    todo = [p for p in prods if p.get('status') == 'new'][:3]
+    todo = [p for p in prods if p.get('status') == 'new'][:2]
     if not todo: return
     os.system('command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg); '
               'fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu-core')
@@ -393,4 +346,5 @@ def jalan():
     run()
 
 
-{'fetch': fetch, 'run': jalan}[sys.argv[1]]()
+if __name__ == '__main__':
+    {'fetch': fetch, 'run': jalan}[sys.argv[1]]()
