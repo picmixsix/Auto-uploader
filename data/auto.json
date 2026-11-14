@@ -1,9 +1,14 @@
 {
-  "enabled": true,
-  "slots": ["12:00", "17:00", "20:00"],
-  "pages_per_video": 3,
-  "days_ahead": 2,
-  "pages": "all", 
-  "voice": "id-ID-GadisNeural",
-"music": true
+ "enabled": true,
+ "slots": [
+  "12:00",
+  "17:00",
+  "20:00"
+ ],
+ "pages_per_video": 3,
+ "days_ahead": 2,
+ "pages": "all",
+ "voice": "id-ID-GadisNeural",
+ "music": true,
+ "templates": []
 }
