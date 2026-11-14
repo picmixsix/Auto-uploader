@@ -7,6 +7,8 @@ TG = os.environ.get('TG_TOKEN', '')
 API = f'https://api.telegram.org/bot{TG}'
 GV = 'https://graph.facebook.com/v25.0'
 BASE = 'https://part-selanjutnya.github.io/Klik-disini'
+FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+ZP = "zoompan=z='min(zoom+0.0006,1.07)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=90:s=1080x1920:fps=30,format=yuv420p"
 
 
 def load(f, d):
@@ -56,7 +58,11 @@ def post(page, tok, x, name=''):
                       data=open('v.mp4', 'rb'))
     if r.status_code != 200: raise Exception(r.text)
     d = (x.get('description', '') + '\n\n' + x.get('hashtags', '')).strip()
-    d = tag(d if BASE in d else (d + '\n\n' + BASE).strip(), name, x['id'])
+    if x.get('link'):
+        if x['link'] not in d: d = (d + '\n\n' + x['link']).strip()
+    elif BASE not in d:
+        d = (d + '\n\n' + BASE).strip()
+    d = tag(d, name, x['id'])
     f = requests.post(f'{GV}/{page}/video_reels', data={'upload_phase': 'finish', 'video_id': a['video_id'],
                       'video_state': 'PUBLISHED', 'description': d, 'access_token': tok}).json()
     if not f.get('success'): raise Exception(f)
@@ -84,16 +90,43 @@ def status(ok, msg):
     save('status.json', s)
 
 
+def parse_product(cap):
+    m = re.search(r'https?://\S+', cap or '')
+    if not m or '|' not in cap: return None
+    link = m.group(0)
+    parts = [x.strip() for x in cap.replace(link, '').split('|')]
+    parts = [x for x in parts if x]
+    if len(parts) < 3: return None
+    return {'name': parts[0], 'price': parts[1],
+            'points': [x.strip() for x in parts[2].split(';') if x.strip()], 'link': link}
+
+
 def fetch(quiet=False):
     pull()
     try:
         s = load('stock.json', {'offset': 0, 'items': []})
-        chat = os.environ.get('TG_CHAT_ID'); n = skip = other = 0
+        prods = load('products.json', [])
+        chat = os.environ.get('TG_CHAT_ID'); n = np_ = skip = other = 0
         r = requests.get(API + '/getUpdates', params={'offset': s['offset']}).json()
         if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')) + ' (jika 409: ada bot lain yang memakai token ini)')
         for u in r['result']:
             s['offset'] = u['update_id'] + 1
             m = u.get('message') or u.get('channel_post') or {}
+            ph = m.get('photo')
+            if ph:
+                if chat and str(m['chat']['id']) != chat: skip += 1; continue
+                gid, cap = m.get('media_group_id'), m.get('caption', '')
+                tgt = next((q for q in prods if gid and q.get('gid') == gid), None)
+                if tgt and not cap:
+                    if tgt['status'] == 'new': tgt['photos'].append(ph[-1]['file_id'])
+                    continue
+                pr = parse_product(cap)
+                if not pr: other += 1; continue
+                i = ph[-1]['file_unique_id']
+                if any(q['id'] == i for q in prods): continue
+                prods.append({**pr, 'id': i, 'gid': gid, 'photos': [ph[-1]['file_id']], 'status': 'new'})
+                np_ += 1
+                continue
             v = m.get('video') or (m.get('document') if 'video' in (m.get('document') or {}).get('mime_type', '') else None)
             if not v: other += 1; continue
             if chat and str(m['chat']['id']) != chat: skip += 1; continue
@@ -106,14 +139,15 @@ def fetch(quiet=False):
             s['items'].append({'id': i, 'file_id': v['file_id'], 'caption': m.get('caption', ''),
                                'duration': v.get('duration', 0), 'size': v.get('file_size', 0), 'thumb': bool(t)})
             n += 1
-        save('stock.json', s)
+        save('stock.json', s); save('products.json', prods)
         msg = f"{n} video baru, stok {len(s['items'])}"
-        if skip: msg += f", {skip} video diabaikan karena Chat ID tidak cocok"
-        if other: msg += f", {other} pesan bukan video"
-        if not quiet or n or skip or other: status(True, msg)
+        if np_: msg += f", {np_} produk baru menunggu dirender"
+        if skip: msg += f", {skip} pesan diabaikan karena Chat ID tidak cocok"
+        if other: msg += f", {other} pesan lain"
+        if not quiet or n or np_ or skip or other: status(True, msg)
     except Exception as e:
         status(False, str(e)[:200])
-    git('bot: ambil video telegram')
+    git('bot: ambil telegram')
 
 
 def clean(*lists):
@@ -121,6 +155,103 @@ def clean(*lists):
     if os.path.isdir('thumbs'):
         for f in os.listdir('thumbs'):
             if f[:-4] not in ref: os.remove('thumbs/' + f)
+
+
+def wrap(d, text, font, width):
+    out, cur = [], ''
+    for w in text.split():
+        t = (cur + ' ' + w).strip()
+        if d.textlength(t, font=font) <= width: cur = t
+        else:
+            if cur: out.append(cur)
+            cur = w
+    if cur: out.append(cur)
+    return out
+
+
+def scene(photo, top, bot, path):
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    W, H = 1080, 1920
+    im = Image.open(photo).convert('RGB')
+    s = max(W / im.width, H / im.height)
+    bg = im.resize((int(im.width * s) + 1, int(im.height * s) + 1))
+    bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width + W) // 2, (bg.height + H) // 2))
+    bg = bg.filter(ImageFilter.GaussianBlur(40)).point(lambda v: int(v * 0.45))
+    k = min(920 / im.width, 900 / im.height)
+    fg = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))))
+    bg.paste(fg, ((W - fg.width) // 2, 430 + (900 - fg.height) // 2))
+    d = ImageDraw.Draw(bg)
+
+    def put(text, size, y, fill):
+        f = ImageFont.truetype(FONT, size)
+        for ln in wrap(d, text, f, 960):
+            x = (W - d.textlength(ln, font=f)) / 2
+            d.text((x + 3, y + 3), ln, font=f, fill='black')
+            d.text((x, y), ln, font=f, fill=fill)
+            y += int(size * 1.25)
+
+    put(top[0], top[1], 200, 'yellow')
+    put(bot[0], bot[1], 1400, 'white')
+    bg.save(path)
+    return bg
+
+
+def render_product(p):
+    d = '/tmp/r' + re.sub(r'\W', '', p['id'])[:10]
+    os.makedirs(d, exist_ok=True)
+    ph = []
+    for i, fid in enumerate(p['photos'][:5]):
+        tgfile(fid, f'{d}/p{i}.jpg'); ph.append(f'{d}/p{i}.jpg')
+    sc = [(('REKOMENDASI HARI INI', 56), (p['name'][:90], 72)), (('HARGA', 56), (p['price'][:30], 120))]
+    for t in p['points'][:4]: sc.append((('KEUNGGULAN', 56), ('✔ ' + t[:80], 68)))
+    sc.append((('MAU TAHU LEBIH LANJUT?', 56), ('Link ada di komentar pertama', 72)))
+    lst = []
+    for i, (top, bot) in enumerate(sc):
+        png, mp = f'{d}/s{i}.png', f'{d}/s{i}.mp4'
+        img = scene(ph[i % len(ph)], top, bot, png)
+        if i == 0:
+            os.makedirs('thumbs', exist_ok=True)
+            img.resize((540, 960)).save(f"thumbs/{p['id']}.jpg")
+        if os.system(f'ffmpeg -y -loglevel error -i {png} -vf "{ZP}" -c:v libx264 -preset veryfast {mp}') != 0:
+            raise Exception('ffmpeg gagal membuat adegan')
+        lst.append(f"file '{mp}'")
+    open(f'{d}/list.txt', 'w').write('\n'.join(lst))
+    out = f'{d}/out.mp4'
+    if os.system(f'ffmpeg -y -loglevel error -f concat -safe 0 -i {d}/list.txt -f lavfi -i anullsrc=r=44100:cl=stereo '
+                 f'-shortest -c:v copy -c:a aac -movflags +faststart {out}') != 0:
+        raise Exception('ffmpeg gagal menggabungkan video')
+    chat = os.environ.get('TG_CHAT_ID')
+    r = requests.post(API + '/sendVideo', data={'chat_id': chat, 'supports_streaming': 'true', 'width': 1080, 'height': 1920},
+                      files={'video': open(out, 'rb')}, timeout=300).json()
+    if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')))
+    v = r['result']['video']
+    return v['file_id'], v.get('duration', 0), v.get('file_size', os.path.getsize(out))
+
+
+def render():
+    pull()
+    prods = load('products.json', [])
+    todo = [p for p in prods if p.get('status') == 'new'][:3]
+    if not todo: return
+    os.system('command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg); '
+              'fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu-core')
+    stock = load('stock.json', {'offset': 0, 'items': []})
+    chat = os.environ.get('TG_CHAT_ID')
+    for p in todo:
+        try:
+            fid, dur, size = render_product(p)
+            cap = f"{p['name']}\nHarga {p['price']}\n" + '\n'.join('✔ ' + x for x in p['points'][:4])
+            stock['items'].append({'id': p['id'], 'file_id': fid, 'caption': cap, 'duration': dur, 'size': size,
+                                   'thumb': True, 'link': p['link'], 'product': p['name']})
+            p['status'] = 'done'
+        except Exception as e:
+            p['status'] = 'error'; p['error'] = str(e)[:200]
+            try:
+                requests.post(API + '/sendMessage', data={'chat_id': chat,
+                              'text': 'Gagal membuat video produk "' + p['name'][:40] + '": ' + str(e)[:200]})
+            except Exception: pass
+    save('stock.json', stock); save('products.json', prods[-200:])
+    git('bot: render video produk')
 
 
 def gemini(x, cfg):
@@ -159,17 +290,21 @@ def gemini(x, cfg):
 
 
 def caption(v, cfg):
-    ts = cfg.get('templates') or ([cfg['template']] if cfg.get('template') else [])
-    if ts:
-        t = random.choice(ts)
-        return {k: str(t.get(k, '')).replace('{caption}', v.get('caption', '')) for k in ('description', 'hashtags', 'comment')}
-    return gemini(v, cfg)
+    if v.get('link'):  # video produk
+        ts = cfg.get('product_templates') or [{'description': '{caption}',
+                                               'hashtags': '#rekomendasi #rekomendasishopee #ad',
+                                               'comment': 'Link produk (afiliasi): {link}'}]
+    else:
+        ts = cfg.get('templates') or ([cfg['template']] if cfg.get('template') else [])
+        if not ts: return gemini(v, cfg)
+    t = random.choice(ts)
+    return {k: str(t.get(k, '')).replace('{caption}', v.get('caption', '')).replace('{link}', v.get('link', ''))
+            for k in ('description', 'hashtags', 'comment')}
 
 
 def auto():
     cfg = load('auto.json', {})
     if not cfg.get('enabled'): return
-    fetch(quiet=True)
     pull()
     stock = load('stock.json', {'offset': 0, 'items': []})
     queue = load('queue.json', [])
@@ -252,6 +387,8 @@ def run():
 
 
 def jalan():
+    if load('auto.json', {}).get('enabled'): fetch(quiet=True)
+    render()
     auto()
     run()
 
