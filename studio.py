@@ -79,27 +79,39 @@ def assign_badges(pts, texts, skip):
     return badge
 
 
+def _lc(x): return x[:1].lower() + x[1:] if x[1:2].islower() else x
+
+
+def auto_narasi(p):
+    """Narasi otomatis dari data produk. Netral: tidak mengarang klaim (terlaris, viral, diskon, dst)."""
+    r = random.Random(str(p.get('id', p['name'])))
+    pts = [x.strip().rstrip('.') for x in p.get('points', []) if x.strip()][:4]
+    out = [r.choice([f"Lagi butuh {p['name']}? Coba lihat ini.", f"Kenalan dulu dengan {p['name']}.",
+                     f"Rekomendasi hari ini: {p['name']}.", f"Ini dia {p['name']} untuk kamu."]),
+           r.choice([f"Harganya {p['price']}.", f"Harga {p['price']}.", f"Dibanderol {p['price']}."])]
+    for i, t in enumerate(pts):
+        short = len(t.split()) <= 2
+        if i == 0: out.append(f'Nilai plusnya, {_lc(t)}.' if short else r.choice([f'{t}.', f'Nilai plusnya, {_lc(t)}.', f'Keunggulan pertama, {_lc(t)}.']))
+        elif short: out.append(r.choice([f'Selain itu, {_lc(t)}.', f'Juga {_lc(t)}.']))
+        elif i == len(pts) - 1 and len(pts) > 2: out.append(f'Dan {_lc(t)}.')
+        else: out.append(r.choice([f'{t}.', f'Selain itu, {_lc(t)}.', f'Juga, {_lc(t)}.']))
+    out.append(r.choice(['Link produknya ada di komentar pertama.', 'Cek detailnya lewat link di komentar pertama.']))
+    return ' '.join(out)
+
+
 def build_scenes(p):
     pts = [x for x in p.get('points', [])][:5]
-    nar = (p.get('narasi') or '').strip()
+    nar = (p.get('narasi') or '').strip() or auto_narasi(p)
     price = p['price']
-    if nar:
-        items = [(s, say_text(s)) for s in sentences(nar)[:8]]
-        PR = r'harga|rupiah|Rp\.?\s?\d|\bribu\b|\bjuta\b'
-        if not any(re.search(PR, s, re.I) for s, _ in items):
-            items.insert(min(1, len(items)), (f'Harganya {price}.', f'Harganya {speak_price(price)}.'))
-        skip = {i for i, (s, _) in enumerate(items) if re.search(PR, s, re.I)}
-        if not any('link' in s.lower() for s, _ in items):
-            items.append(('Link produknya ada di komentar pertama.', 'Link produknya ada di komentar pertama.'))
-        bd = assign_badges(pts, [s for s, _ in items], skip)
-        return [{'text': s, 'say': v, 'badge': bd[i]} for i, (s, v) in enumerate(items)]
-    sc = [{'text': f"Rekomendasi hari ini, {p['name']}.", 'say': f"Rekomendasi hari ini, {p['name']}.", 'badge': None},
-          {'text': f"Harganya {price}.", 'say': f"Harganya {speak_price(price)}.", 'badge': None}]
-    for i, t in enumerate(pts):
-        t = t.rstrip('. ') + '.'
-        sc.append({'text': t, 'say': t, 'badge': i})
-    sc.append({'text': 'Link produknya ada di komentar pertama.', 'say': 'Link produknya ada di komentar pertama.', 'badge': None})
-    return sc
+    items = [(s, say_text(s)) for s in sentences(nar)[:8]]
+    PR = r'harga|rupiah|Rp\.?\s?\d|\bribu\b|\bjuta\b|dibanderol'
+    if not any(re.search(PR, s, re.I) for s, _ in items):
+        items.insert(min(1, len(items)), (f'Harganya {price}.', f'Harganya {speak_price(price)}.'))
+    skip = {i for i, (s, _) in enumerate(items) if re.search(PR, s, re.I)}
+    if not any('link' in s.lower() for s, _ in items):
+        items.append(('Link produknya ada di komentar pertama.', 'Link produknya ada di komentar pertama.'))
+    bd = assign_badges(pts, [s for s, _ in items], skip)
+    return [{'text': s, 'say': v, 'badge': bd[i]} for i, (s, v) in enumerate(items)]
 
 
 # ---------------------------------------------------------------- audio
@@ -491,4 +503,4 @@ def make_video(p, photos, out, thumb, voice='id-ID-GadisNeural', music=True, wor
     finally:
         pr.stdin.close(); rc = pr.wait()
     if rc != 0: raise Exception('ffmpeg gagal membuat video')
-    return {'warn': warn, 'duration': total}
+    return {'warn': warn, 'duration': total, 'narasi': ' '.join(x['text'] for x in sc)}
