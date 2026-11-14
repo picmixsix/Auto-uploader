@@ -153,8 +153,17 @@ def gemini(x, cfg):
         h = o.get('hashtags', '')
         return {'description': o.get('description', ''), 'hashtags': ' '.join(h) if isinstance(h, list) else h,
                 'comment': o.get('comment', '')}
-    except Exception:
+    except Exception as e:
+        print('GEMINI GAGAL:', str(e)[:200])
         return base
+
+
+def caption(v, cfg):
+    ts = cfg.get('templates') or ([cfg['template']] if cfg.get('template') else [])
+    if ts:
+        t = random.choice(ts)
+        return {k: str(t.get(k, '')).replace('{caption}', v.get('caption', '')) for k in ('description', 'hashtags', 'comment')}
+    return gemini(v, cfg)
 
 
 def auto():
@@ -190,7 +199,7 @@ def auto():
         sel = [pages[(st['cursor'] + i) % len(pages)] for i in range(k)]
         st['cursor'] = (st['cursor'] + k) % len(pages)
         at = t + dt.timedelta(minutes=random.randint(0, 20))
-        queue.append({**v, **gemini(v, cfg), 'pages': sel, 'at': at.isoformat(), 'slot': key, 'status': 'pending'})
+        queue.append({**v, **caption(v, cfg), 'pages': sel, 'at': at.isoformat(), 'slot': key, 'status': 'pending'})
         n += 1
     if n:
         save('stock.json', stock); save('queue.json', queue); save('autostate.json', st)
