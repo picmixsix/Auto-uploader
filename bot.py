@@ -88,19 +88,68 @@ def status(ok, msg):
     save('status.json', s)
 
 
+URL_RE = re.compile(r'https?://\S+', re.I)
+P_RP = re.compile(r'\brp\.?\s?(\d[\d.,]*)\s*(rb|ribu|k|jt|juta)?(?![a-z])', re.I)
+P_SEP = re.compile(r'^(?:harga\s*:?\s*)?(\d{1,3}(?:[.,]\d{3})+)()$', re.I)
+P_UNIT = re.compile(r'^(?:harga\s*:?\s*)?(\d+(?:[.,]\d+)?)\s?(rb|ribu|k|jt|juta)$', re.I)
+
+
+def to_rupiah(num, unit):
+    s = num.strip('.,')
+    unit = (unit or '').lower()
+    if unit:
+        v = float(s.replace(',', '.')) if re.fullmatch(r'\d+[.,]\d{1,2}', s) else float(re.sub(r'[.,]', '', s))
+        return int(round(v * (1000 if unit in ('rb', 'ribu', 'k') else 1000000)))
+    return int(re.sub(r'[.,]', '', s))
+
+
+def fmt_rp(n): return 'Rp' + f'{n:,}'.replace(',', '.')
+
+
+def tgsay(text):
+    chat = os.environ.get('TG_CHAT_ID')
+    if not chat: return
+    try: requests.post(API + '/sendMessage', data={'chat_id': chat, 'text': text[:3500]}, timeout=30)
+    except Exception: pass
+
+
+CONTOH = ('Contoh keterangan (urutan bebas):\n'
+          'Rak Piring Stainless\nRp39.000\nTidak karat; Muat 10 piring\nhttps://s.shopee.co.id/xxxx')
+
+
 def parse_product(cap):
-    m = re.search(r'https?://\S+', cap or '', re.I)
-    if not m or '|' not in cap: return None
-    raw = m.group(0)
-    link = re.sub(r'^https?', lambda x: x.group(0).lower(), raw, flags=re.I)
-    lines = [l.strip() for l in cap.replace(raw, '').splitlines() if l.strip()]
-    fi = next((i for i, l in enumerate(lines) if '|' in l), None)
-    if fi is None: return None
-    parts = [x.strip() for x in lines[fi].split('|') if x.strip()]
-    if len(parts) < 3: return None
-    narasi = ' '.join(l for i, l in enumerate(lines) if i != fi)
-    return {'name': parts[0], 'price': parts[1],
-            'points': [x.strip() for x in parts[2].split(';') if x.strip()], 'link': link, 'narasi': narasi}
+    """Kembalikan (produk, daftar_yang_kurang). Urutan bebas; wajib: link, harga, nama."""
+    cap = cap or ''
+    m = URL_RE.search(cap)
+    link = re.sub(r'^https?', lambda x: x.group(0).lower(), m.group(0), flags=re.I) if m else ''
+    text = cap.replace(m.group(0), '\n') if m else cap
+    price, mp = None, P_RP.search(text)
+    if mp:
+        price = to_rupiah(mp.group(1), mp.group(2)); text = text[:mp.start()] + '\n' + text[mp.end():]
+    lines = [l.strip(' \t-•:,') for l in text.splitlines()]
+    nar, mode, segs = [], False, []
+    for l in lines:
+        if not l: continue
+        mm = re.match(r'^narasi\b[\s:\-]*(.*)$', l, re.I)
+        if mm: mode = True; l = mm.group(1).strip()
+        if mode:
+            if l: nar.append(l)
+            continue
+        for x in re.split(r'[|;]', l):
+            x = x.strip(' \t-•:,')
+            if x and x.lower() != 'harga': segs.append(x)
+    if price is None:
+        for i, x in enumerate(segs):
+            mm = P_SEP.match(x) or P_UNIT.match(x)
+            if mm: price = to_rupiah(mm.group(1), mm.group(2)); segs.pop(i); break
+    name, pts = '', []
+    for x in segs:
+        if not name: name = x[:100]
+        elif len(x.split()) >= 9: nar.append(x)
+        else: pts.append(x)
+    miss = [k for k, v in (('nama produk', name), ('harga', price), ('link Shopee', link)) if not v]
+    if miss: return None, miss
+    return {'name': name, 'price': fmt_rp(price), 'points': pts[:5], 'link': link, 'narasi': ' '.join(nar)}, []
 
 
 def fetch(quiet=False):
@@ -108,7 +157,7 @@ def fetch(quiet=False):
     try:
         s = load('stock.json', {'offset': 0, 'items': []})
         prods = load('products.json', [])
-        chat = os.environ.get('TG_CHAT_ID'); n = np_ = skip = other = 0
+        chat = os.environ.get('TG_CHAT_ID'); n = np_ = skip = other = 0; newp = []
         r = requests.get(API + '/getUpdates', params={'offset': s['offset']}).json()
         if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')) + ' (jika 409: ada bot lain yang memakai token ini)')
         for u in r['result']:
@@ -122,11 +171,17 @@ def fetch(quiet=False):
                 if tgt and not cap:
                     if tgt['status'] == 'new': tgt['photos'].append(ph[-1]['file_id'])
                     continue
-                pr = parse_product(cap)
-                if not pr: other += 1; continue
+                if not cap.strip():
+                    if not gid: tgsay('⚠️ Foto diterima tanpa keterangan, jadi tidak diproses.\n\n' + CONTOH)
+                    other += 1; continue
+                pr, miss = parse_product(cap)
+                if not pr:
+                    tgsay('⚠️ Foto belum bisa diproses. Yang belum ada: ' + ', '.join(miss) + '.\n\n' + CONTOH)
+                    other += 1; continue
                 i = ph[-1]['file_unique_id'] + '-' + hashlib.md5(cap.encode()).hexdigest()[:4]
                 if any(q['id'] == i for q in prods): continue
-                prods.append({**pr, 'id': i, 'gid': gid, 'photos': [ph[-1]['file_id']], 'status': 'new'})
+                item = {**pr, 'id': i, 'gid': gid, 'photos': [ph[-1]['file_id']], 'status': 'new'}
+                prods.append(item); newp.append(item)
                 np_ += 1
                 continue
             v = m.get('video') or (m.get('document') if 'video' in (m.get('document') or {}).get('mime_type', '') else None)
@@ -142,6 +197,10 @@ def fetch(quiet=False):
                                'duration': v.get('duration', 0), 'size': v.get('file_size', 0), 'thumb': bool(t)})
             n += 1
         save('stock.json', s); save('products.json', prods)
+        for q in newp:
+            tgsay('✅ Diterima: ' + q['name'] + '\nHarga: ' + q['price'] + '\nKeunggulan: ' + ('; '.join(q['points']) or '-') +
+                  '\nFoto: ' + str(len(q['photos'])) + '\nNarasi: ' + ('dari kamu' if q['narasi'] else 'dibuat otomatis') +
+                  '\nVideo siap dalam sekitar 10 menit.')
         msg = f"{n} video baru, stok {len(s['items'])}"
         if np_: msg += f", {np_} produk baru menunggu dirender"
         if skip: msg += f", {skip} pesan diabaikan karena Chat ID tidak cocok"
@@ -168,12 +227,15 @@ def render_product(p):
         tgfile(fid, f'{d}/p{i}.jpg'); ph.append(f'{d}/p{i}.jpg')
     cfg = load('auto.json', {})
     out = f'{d}/out.mp4'
+    if not p.get('narasi'):
+        nr = gemini_narasi(p, cfg)
+        if nr: p = {**p, 'narasi': nr}
     info = studio.make_video(p, ph, out, f"thumbs/{p['id']}.jpg", voice=cfg.get('voice', 'id-ID-GadisNeural'),
                              music=cfg.get('music', True), work=d + '/w')
     size = os.path.getsize(out)
     if size > 19000000: raise Exception('video terlalu besar (%.1f MB)' % (size / 1e6))
     warn = '; '.join(info['warn'])
-    cap = 'Pratinjau: ' + p['name'][:80] + (('\n⚠ ' + warn) if warn else '')
+    cap = 'Pratinjau: ' + p['name'][:80] + '\n\nNarasi: ' + info['narasi'] + (('\n\n⚠ ' + warn) if warn else '')
     r = requests.post(API + '/sendVideo', data={'chat_id': os.environ.get('TG_CHAT_ID'), 'supports_streaming': 'true',
                       'width': 1080, 'height': 1920, 'caption': cap[:1000]},
                       files={'video': open(out, 'rb')}, timeout=300).json()
@@ -208,10 +270,28 @@ def render():
     git('bot: render video produk')
 
 
+def gjson(parts, cfg):
+    key = os.environ.get('GEMINI_KEY', '')
+    if not key: raise Exception('GEMINI_KEY kosong')
+    model = cfg.get('model', 'gemini-2.5-flash')
+    for i in range(2):
+        r = requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
+                          params={'key': key}, timeout=90,
+                          json={'contents': [{'parts': parts}], 'generationConfig': {'responseMimeType': 'application/json'}})
+        if r.status_code == 404 and i == 0:
+            m = requests.get('https://generativelanguage.googleapis.com/v1beta/models',
+                             params={'pageSize': 200, 'key': key}, timeout=30).json()
+            c = sorted([k['name'].replace('models/', '') for k in m.get('models', [])
+                        if 'generateContent' in k.get('supportedGenerationMethods', []) and 'flash' in k['name']
+                        and not re.search('lite|image|tts|live|audio|preview|exp', k['name'])], reverse=True)
+            if c: model = c[0]; continue
+        break
+    return json.loads(r.json()['candidates'][0]['content']['parts'][0]['text'])
+
+
 def gemini(x, cfg):
     base = {'description': x.get('caption', ''), 'hashtags': '', 'comment': ''}
-    key = os.environ.get('GEMINI_KEY', '')
-    if not key: return base
+    if not os.environ.get('GEMINI_KEY'): return base
     try:
         parts = [{'text': 'Kamu ahli Facebook Reels Indonesia. Teks bawaan video: "' + (x.get('caption') or '-') +
                   '". Lihat gambar cuplikan video ini, lalu balas JSON {"description","hashtags","comment"}: '
@@ -221,26 +301,37 @@ def gemini(x, cfg):
             d = base64.b64encode(open(f"thumbs/{x['id']}.jpg", 'rb').read()).decode()
             parts.append({'inline_data': {'mime_type': 'image/jpeg', 'data': d}})
         except Exception: pass
-        model = cfg.get('model', 'gemini-2.5-flash')
-        for i in range(2):
-            r = requests.post(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
-                              params={'key': key}, timeout=90,
-                              json={'contents': [{'parts': parts}], 'generationConfig': {'responseMimeType': 'application/json'}})
-            if r.status_code == 404 and i == 0:
-                m = requests.get('https://generativelanguage.googleapis.com/v1beta/models',
-                                 params={'pageSize': 200, 'key': key}, timeout=30).json()
-                c = sorted([k['name'].replace('models/', '') for k in m.get('models', [])
-                            if 'generateContent' in k.get('supportedGenerationMethods', []) and 'flash' in k['name']
-                            and not re.search('lite|image|tts|live|audio|preview|exp', k['name'])], reverse=True)
-                if c: model = c[0]; continue
-            break
-        o = json.loads(r.json()['candidates'][0]['content']['parts'][0]['text'])
+        o = gjson(parts, cfg)
         h = o.get('hashtags', '')
         return {'description': o.get('description', ''), 'hashtags': ' '.join(h) if isinstance(h, list) else h,
                 'comment': o.get('comment', '')}
     except Exception as e:
         print('GEMINI GAGAL:', str(e)[:200])
         return base
+
+
+BANNED = r'terlaris|terjual|best ?seller|viral|diskon|promo|gratis|garansi|testimoni|termurah|nomor satu|ori(?:ginal)?\b'
+
+
+def gemini_narasi(p, cfg):
+    """Narasi voice over dari AI (opsional). Hanya dipakai kalau lolos pemeriksaan; selain itu '' (pakai narasi template)."""
+    if not cfg.get('narasi_ai') or not os.environ.get('GEMINI_KEY'): return ''
+    try:
+        facts = f"Nama: {p['name']}\nHarga: {p['price']}\nKeunggulan: " + '; '.join(p['points'])
+        o = gjson([{'text': 'Tulis narasi voice over iklan produk untuk video Reels, bahasa Indonesia santai, 5 sampai 7 kalimat pendek '
+                    '(maksimal 14 kata per kalimat). Urutan: pembuka singkat, harga, satu kalimat untuk tiap keunggulan, '
+                    'penutup yang mengarahkan ke link di komentar pertama. Gunakan HANYA fakta berikut. Jangan mengarang klaim, '
+                    'angka, diskon, jumlah terjual, atau testimoni.\n' + facts + '\nBalas JSON {"narasi": "..."}'}], cfg)
+        t = str(o.get('narasi', '')).strip()
+        ss = [x for x in re.split(r'(?<=[.!?])\s+', t) if x.strip()]
+        if not (3 <= len(ss) <= 9) or 'link' not in t.lower(): return ''
+        if set(re.findall(r'\d+', t)) - set(re.findall(r'\d+', facts)): return ''
+        bad = re.findall(BANNED, t, re.I)
+        if any(w.lower() not in facts.lower() for w in bad): return ''
+        return t
+    except Exception as e:
+        print('NARASI AI GAGAL:', str(e)[:200])
+        return ''
 
 
 def caption(v, cfg):
