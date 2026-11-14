@@ -41,7 +41,7 @@ def speak_price(price):
 
 
 def say_text(t):
-    return re.sub(r'Rp\.?\s?([\d.,]+)', lambda m: speak_price(m.group(1)), t)
+    return re.sub(r'Rp\.?\s?(\d(?:[\d.,]*\d)?)', lambda m: speak_price(m.group(1)), t)
 
 
 def sentences(text):
@@ -52,24 +52,53 @@ def sentences(text):
     return out
 
 
+def _tok(s):
+    return {w for w in re.findall(r'[a-z0-9]+', s.lower()) if len(w) >= 4}
+
+
+def _overlap(a, b):
+    ta, tb = _tok(a), _tok(b)
+    return sum(1 for x in ta if any(x.startswith(y) or y.startswith(x) for y in tb))
+
+
+def assign_badges(pts, texts, skip):
+    n = len(texts) - 1  # kalimat terakhir (link) tidak diberi lencana
+    badge = [None] * len(texts)
+    pending = []
+    for k, pt in enumerate(pts):
+        best, bi = 0, None
+        for i in range(n):
+            if badge[i] is not None or i in skip: continue
+            o = _overlap(pt, texts[i])
+            if o > best: best, bi = o, i
+        if bi is not None: badge[bi] = k
+        else: pending.append(k)
+    free = [i for i in range(n) if badge[i] is None and i not in skip]
+    free = [i for i in free if i != 0] + [i for i in free if i == 0]
+    for k, i in zip(pending, free): badge[i] = k
+    return badge
+
+
 def build_scenes(p):
     pts = [x for x in p.get('points', [])][:5]
     nar = (p.get('narasi') or '').strip()
-    sc = []
+    price = p['price']
     if nar:
-        ss = sentences(nar)[:9]
-        if not any('link' in s.lower() for s in ss): ss.append('Link produknya ada di komentar pertama.')
-        for i, s in enumerate(ss):
-            k = i - 1
-            b = k if (0 <= k < len(pts) and i < len(ss) - 1) else None
-            sc.append({'text': s, 'say': say_text(s), 'badge': b})
-    else:
-        sc.append({'text': f"Rekomendasi hari ini, {p['name']}.", 'say': f"Rekomendasi hari ini, {p['name']}.", 'badge': None})
-        sc.append({'text': f"Harganya {p['price']}.", 'say': f"Harganya {speak_price(p['price'])}.", 'badge': None})
-        for i, t in enumerate(pts):
-            t = t.rstrip('. ') + '.'
-            sc.append({'text': t, 'say': t, 'badge': i})
-        sc.append({'text': 'Link produknya ada di komentar pertama.', 'say': 'Link produknya ada di komentar pertama.', 'badge': None})
+        items = [(s, say_text(s)) for s in sentences(nar)[:8]]
+        PR = r'harga|rupiah|Rp\.?\s?\d|\bribu\b|\bjuta\b'
+        if not any(re.search(PR, s, re.I) for s, _ in items):
+            items.insert(min(1, len(items)), (f'Harganya {price}.', f'Harganya {speak_price(price)}.'))
+        skip = {i for i, (s, _) in enumerate(items) if re.search(PR, s, re.I)}
+        if not any('link' in s.lower() for s, _ in items):
+            items.append(('Link produknya ada di komentar pertama.', 'Link produknya ada di komentar pertama.'))
+        bd = assign_badges(pts, [s for s, _ in items], skip)
+        return [{'text': s, 'say': v, 'badge': bd[i]} for i, (s, v) in enumerate(items)]
+    sc = [{'text': f"Rekomendasi hari ini, {p['name']}.", 'say': f"Rekomendasi hari ini, {p['name']}.", 'badge': None},
+          {'text': f"Harganya {price}.", 'say': f"Harganya {speak_price(price)}.", 'badge': None}]
+    for i, t in enumerate(pts):
+        t = t.rstrip('. ') + '.'
+        sc.append({'text': t, 'say': t, 'badge': i})
+    sc.append({'text': 'Link produknya ada di komentar pertama.', 'say': 'Link produknya ada di komentar pertama.', 'badge': None})
     return sc
 
 
