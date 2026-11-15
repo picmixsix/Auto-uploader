@@ -29,10 +29,23 @@ def git(m):
         if os.system('git pull -q --rebase -X theirs --autostash && git push -q') == 0: break
 
 
+def http(method, url, tries=4, **kw):
+    """requests dengan timeout + coba ulang untuk koneksi putus (ConnectionReset, timeout)."""
+    kw.setdefault('timeout', 60)
+    for i in range(tries):
+        try:
+            return requests.request(method, url, **kw)
+        except (requests.ConnectionError, requests.Timeout):
+            if i == tries - 1: raise
+            time.sleep(3 * 2 ** i)
+
+
 def tgfile(fid, path):
-    p = requests.get(API + '/getFile', params={'file_id': fid}).json()
+    p = http('GET', API + '/getFile', params={'file_id': fid}).json()
     if not p.get('ok'): raise Exception('Telegram: ' + str(p.get('description')))
-    open(path, 'wb').write(requests.get(f'https://api.telegram.org/file/bot{TG}/' + p['result']['file_path']).content)
+    r = http('GET', f'https://api.telegram.org/file/bot{TG}/' + p['result']['file_path'], timeout=180)
+    if r.status_code != 200: raise Exception('Telegram: unduh file gagal (%s)' % r.status_code)
+    open(path, 'wb').write(r.content)
 
 
 def dec(t):
@@ -158,7 +171,7 @@ def fetch(quiet=False):
         s = load('stock.json', {'offset': 0, 'items': []})
         prods = load('products.json', [])
         chat = os.environ.get('TG_CHAT_ID'); n = np_ = skip = other = 0; newp = []
-        r = requests.get(API + '/getUpdates', params={'offset': s['offset']}).json()
+        r = http('GET', API + '/getUpdates', params={'offset': s['offset']}).json()
         if not r.get('ok'): raise Exception('Telegram: ' + str(r.get('description')) + ' (jika 409: ada bot lain yang memakai token ini)')
         for u in r['result']:
             s['offset'] = u['update_id'] + 1
@@ -205,7 +218,8 @@ def fetch(quiet=False):
         if np_: msg += f", {np_} produk baru menunggu dirender"
         if skip: msg += f", {skip} pesan diabaikan karena Chat ID tidak cocok"
         if other: msg += f", {other} pesan lain"
-        if not quiet or n or np_ or skip or other: status(True, msg)
+        prev = load('status.json', {}).get('fetch', {})
+        if not quiet or n or np_ or skip or other or not prev.get('ok', True): status(True, msg)
     except Exception as e:
         status(False, str(e)[:200])
     git('bot: ambil telegram')
