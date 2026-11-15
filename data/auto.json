@@ -6,7 +6,7 @@
   "19:05",
   "20:00"
  ],
- "pages_per_video": 3,
+ "pages_per_video": 10,
  "days_ahead": 2,
  "pages": "all",
  "voice": "id-ID-GadisNeural",
