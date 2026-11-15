@@ -251,21 +251,29 @@ def render():
     if not todo: return
     os.system('command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg); '
               'fc-list | grep -qi dejavu || sudo apt-get install -y -qq fonts-dejavu-core')
-    stock = load('stock.json', {'offset': 0, 'items': []})
     chat = os.environ.get('TG_CHAT_ID')
+    made, res = [], {}
     for p in todo:
         try:
             fid, dur, size = render_product(p)
             cap = f"{p['name']}\nHarga {p['price']}\n" + '\n'.join('✔ ' + x for x in p['points'][:4])
-            stock['items'].append({'id': p['id'], 'file_id': fid, 'caption': cap, 'duration': dur, 'size': size,
-                                   'thumb': True, 'link': p['link'], 'product': p['name']})
-            p['status'] = 'done'
+            made.append({'id': p['id'], 'file_id': fid, 'caption': cap, 'duration': dur, 'size': size,
+                         'thumb': True, 'link': p['link'], 'product': p['name']})
+            res[p['id']] = {'status': 'done'}
         except Exception as e:
-            p['status'] = 'error'; p['error'] = str(e)[:200]
+            res[p['id']] = {'status': 'error', 'error': str(e)[:200]}
             try:
                 requests.post(API + '/sendMessage', data={'chat_id': chat,
                               'text': 'Gagal membuat video produk "' + p['name'][:40] + '": ' + str(e)[:200]})
             except Exception: pass
+    # render memakan waktu: ambil data terbaru dulu supaya produk/stok yang ditambah lewat web tidak tertimpa
+    pull()
+    prods = load('products.json', [])
+    for q in prods:
+        if q['id'] in res: q.update(res[q['id']])
+    stock = load('stock.json', {'offset': 0, 'items': []})
+    have = {x['id'] for x in stock['items']}
+    stock['items'].extend(x for x in made if x['id'] not in have)
     save('stock.json', stock); save('products.json', prods[-200:])
     git('bot: render video produk')
 
