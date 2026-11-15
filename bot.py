@@ -23,7 +23,8 @@ def pull(): os.system('git pull -q --rebase -X theirs --autostash')
 
 
 def git(m):
-    os.system('git config user.name bot; git config user.email bot@users.noreply.github.com; git add -A; '
+    os.system('git config user.name bot; git config user.email bot@users.noreply.github.com; '
+              'git rm -r -q --cached --ignore-unmatch __pycache__ v.mp4 >/dev/null 2>&1; git add -A; '
               f'git diff --cached --quiet || git commit -qm "{m}"')
     for _ in range(4):
         if os.system('git pull -q --rebase -X theirs --autostash && git push -q') == 0: break
