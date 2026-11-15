@@ -413,6 +413,12 @@ def run():
     now = dt.datetime.now(dt.timezone.utc)
     pages = {p['id']: p for p in load('pages.json', [])}
     q = load('queue.json', [])
+    # hanya satu job 'main' berjalan sekaligus, jadi 'processing' di sini pasti sisa job yang terputus/timeout
+    stale = [x for x in q if x['status'] == 'processing']
+    for x in stale:
+        x['status'] = 'failed'
+        x['error'] = 'Proses sebelumnya terputus. Cek fanspage, lalu Simpan perubahan di Antrian untuk mencoba lagi'
+    if stale: save('queue.json', q); git('bot: tandai upload terputus')
     due = [x for x in q if x['status'] == 'pending' and
            (not x.get('at') or dt.datetime.fromisoformat(x['at'].replace('Z', '+00:00')) <= now)]
     if not due: return
