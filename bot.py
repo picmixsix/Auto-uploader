@@ -137,6 +137,8 @@ def parse_product(cap):
     m = URL_RE.search(cap)
     link = re.sub(r'^https?', lambda x: x.group(0).lower(), m.group(0), flags=re.I) if m else ''
     text = cap.replace(m.group(0), '\n') if m else cap
+    tema, mt = '', re.search(r'^[ \t]*tema[ \t]*:[ \t]*([A-Za-z0-9_-]+)[ \t]*$', text, re.I | re.M)
+    if mt: tema = mt.group(1).lower(); text = text[:mt.start()] + '\n' + text[mt.end():]
     price, mp = None, P_RP.search(text)
     if mp:
         price = to_rupiah(mp.group(1), mp.group(2)); text = text[:mp.start()] + '\n' + text[mp.end():]
@@ -163,7 +165,7 @@ def parse_product(cap):
         else: pts.append(x)
     miss = [k for k, v in (('nama produk', name), ('harga', price), ('link Shopee', link)) if not v]
     if miss: return None, miss
-    return {'name': name, 'price': fmt_rp(price), 'points': pts[:5], 'link': link, 'narasi': ' '.join(nar)}, []
+    return {'name': name, 'price': fmt_rp(price), 'points': pts[:5], 'link': link, 'narasi': ' '.join(nar), 'theme': tema}, []
 
 
 def fetch(quiet=False):
@@ -213,7 +215,7 @@ def fetch(quiet=False):
         save('stock.json', s); save('products.json', prods)
         for q in newp:
             tgsay('✅ Diterima: ' + q['name'] + '\nHarga: ' + q['price'] + '\nKeunggulan: ' + ('; '.join(q['points']) or '-') +
-                  '\nFoto: ' + str(len(q['photos'])) + '\nNarasi: ' + ('dari kamu' if q['narasi'] else 'dibuat otomatis') +
+                  '\nFoto: ' + str(len(q['photos'])) + '\nNarasi: ' + ('dari kamu' if q['narasi'] else 'dibuat otomatis') + '\nTema: ' + (q.get('theme') or 'bawaan') +
                   '\nVideo siap dalam sekitar 10 menit.')
         msg = f"{n} video baru, stok {len(s['items'])}"
         if np_: msg += f", {np_} produk baru menunggu dirender"
@@ -245,12 +247,13 @@ def render_product(p):
     if not p.get('narasi'):
         nr = gemini_narasi(p, cfg)
         if nr: p = {**p, 'narasi': nr}
+    theme = studio.pick_theme(p.get('theme') or cfg.get('theme'), p['id'])
     info = studio.make_video(p, ph, out, f"thumbs/{p['id']}.jpg", voice=cfg.get('voice', 'id-ID-GadisNeural'),
-                             music=cfg.get('music', True), work=d + '/w')
+                             music=cfg.get('music', True), work=d + '/w', theme=theme)
     size = os.path.getsize(out)
     if size > 19000000: raise Exception('video terlalu besar (%.1f MB)' % (size / 1e6))
     warn = '; '.join(info['warn'])
-    cap = 'Pratinjau: ' + p['name'][:80] + '\n\nNarasi: ' + info['narasi'] + (('\n\n⚠ ' + warn) if warn else '')
+    cap = 'Pratinjau: ' + p['name'][:80] + '\nTema: ' + theme + '\n\nNarasi: ' + info['narasi'] + (('\n\n⚠ ' + warn) if warn else '')
     r = requests.post(API + '/sendVideo', data={'chat_id': os.environ.get('TG_CHAT_ID'), 'supports_streaming': 'true',
                       'width': 1080, 'height': 1920, 'caption': cap[:1000]},
                       files={'video': open(out, 'rb')}, timeout=300).json()
