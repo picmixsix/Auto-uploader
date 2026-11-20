@@ -160,5 +160,33 @@
   ],
   "status": "done",
   "src": "web"
+ },
+ {
+  "id": "wmwp4cx59ekn",
+  "name": "Setelan Rayon Motif Bahan Rayon Premium One",
+  "price": "Rp33.000",
+  "points": [
+   "Tampil anggun dan nyaman,",
+   "Terbuat dari bahan yang ringan,",
+   "Adem dan nyaman untuk harian,",
+   "Cocok digunakan untuk bersantai,",
+   "Desain elegant"
+  ],
+  "link": "https://s.shopee.co.id/7fbXlYB5lb",
+  "narasi": "",
+  "theme": "",
+  "gid": null,
+  "photos": [
+   "AgACAgUAAxkDAANxawABY5XyLeQfvuYJp5_A3UDYMoyVAAKVFWsbyrAAAVQgTqDiYHBw7gEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAANyawABY5dYMdiolzu2FVyweGlEBJj9AAKWFWsbyrAAAVTxkmWWB3eK8wEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAANzawABY5nNzHwKI0pg0rBNSl0V-KKrAAKXFWsbyrAAAVT8dAoTbZMpRgEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAAN0awABY5vViIKNWGKr6pM1JUYFf_3xAAKYFWsbyrAAAVSs9OZceU3lQQEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAAN1awABY5324f9TYY2cz_CV-6kuHrL_AAKZFWsbyrAAAVSEjE5KbiN-RQEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAAN2awABY5-QfHwrVhbA60_Qh7Muy5jWAAKaFWsbyrAAAVRQiXCnXBCBiQEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAAN3awABY6GlvoVqkSB4NwZZkdtypXX6AAKbFWsbyrAAAVS3-ebyObbpbQEAAwIAA3gAAz0E",
+   "AgACAgUAAxkDAAN4awABY6PTUZzP-mb-Oie_IzoghZ4iAAKcFWsbyrAAAVQZWp8AAWlz3LwBAAMCAAN4AAM9BA"
+  ],
+  "status": "new",
+  "src": "web"
  }
 ]
