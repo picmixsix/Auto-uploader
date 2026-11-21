@@ -188,5 +188,32 @@
   ],
   "status": "done",
   "src": "web"
+ },
+ {
+  "id": "wmwpsdh3b4pz",
+  "name": "Jas Hujan Bahan EVA Motif Polkadot Merk BADA",
+  "price": "Rp17.000",
+  "points": [
+   "Ringan dan nyaman dipakai,",
+   "Praktis dan mudah dibawa,",
+   "Tahan air,",
+   "Model terusan perlindungan lebih luas,",
+   "Mudah dilipat dan disimpan"
+  ],
+  "link": "https://s.shopee.co.id/60TKWiVd52",
+  "narasi": "",
+  "theme": "aurora",
+  "gid": null,
+  "photos": [
+   "AgACAgUAAxkDAAN7awEBKwgQqDyYZrFOBKUGcFbBJSkAAkkUaxvKsAhUQmKdxhEG5IEBAAMCAAN4AAM9BA",
+   "AgACAgUAAxkDAAN8awEBLSW_fYaWj2Y_vSpgT705dZIAAkoUaxvKsAhUGKiwAAG3sJJPAQADAgADeAADPQQ",
+   "AgACAgUAAxkDAAN9awEBL18OEnjgjAu6S2qKUl_2YTwAAksUaxvKsAhUOvkO6byS8DQBAAMCAAN4AAM9BA",
+   "AgACAgUAAxkDAAN-awEBMEXFDeqvhBWKh4PsJIvGI3gAAkwUaxvKsAhURm3E5OFGZMEBAAMCAAN4AAM9BA",
+   "AgACAgUAAxkDAAN_awEBMc_V-vPYZet5gRlehwlteUcAAk0UaxvKsAhUvwL-CHeie8kBAAMCAAN4AAM9BA",
+   "AgACAgUAAxkDAAOAawEBM8m3Vop_G710U8zdPpA6EpAAAk4UaxvKsAhUaSmZSKBCysYBAAMCAAN4AAM9BA",
+   "AgACAgUAAxkDAAOBawEBNGfaN40Mb7KaTYgC2QrERqUAAk8UaxvKsAhURyw57lfLKtUBAAMCAAN4AAM9BA"
+  ],
+  "status": "new",
+  "src": "web"
  }
 ]
