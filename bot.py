@@ -360,16 +360,51 @@ def gemini_narasi(p, cfg):
         return ''
 
 
+STOP = set('untuk dan yang dengan atau dari the new baru murah promo terbaru original ori premium bahan ukuran isi pcs set paket'.split())
+CATS = [(r'jas hujan|payung|raincoat', ['#jashujan', '#perlengkapanhujan']),
+        (r'skincare|sunscreen|serum|pelembab|moisturizer|toner|wajah|facial|kulit|sabun muka|lip|bedak|foundation', ['#skincare', '#perawatankulit']),
+        (r'rak |dapur|piring|panci|wajan|spatula|talenan|sendok|gelas|botol|toples|kompor', ['#peralatandapur', '#dapur']),
+        (r'gamis|hijab|jilbab|khimar|kerudung|abaya|mukena|koko', ['#fashionmuslim', '#ootd']),
+        (r'baju|kemeja|kaos|dress|rok |celana|jaket|hoodie|sweater|blouse|outer', ['#fashion', '#ootd']),
+        (r'tas |ransel|totebag|tote bag|dompet|backpack', ['#tas', '#fashionwanita']),
+        (r'sepatu|sandal|sneakers|selop', ['#sepatu', '#fashion']),
+        (r'kopi|teh|susu|snack|makanan|minuman|cemilan', ['#kulinerindonesia', '#cemilan']),
+        (r'hp |ponsel|charger|kabel|earphone|headset|speaker|powerbank|casing', ['#aksesorishp', '#gadget']),
+        (r'lampu|kipas|setrika|blender|rice cooker|elektronik', ['#elektronik', '#peralatanrumah']),
+        (r'mainan|anak|bayi|baby|stroller', ['#perlengkapananak', '#mainananak']),
+        (r'motor|helm|mobil|otomotif|jok', ['#otomotif', '#aksesorismotor']),
+        (r'sprei|bantal|selimut|kasur|gorden|karpet|handuk|organizer|keranjang', ['#perlengkapanrumah', '#homedecor'])]
+
+
+def product_tags(v, limit=6):
+    """Tagar otomatis dari nama produk: tagar nama + kategori + tagar tetap. Tidak memakai klaim (viral, murah, dst)."""
+    name = (v.get('product') or v.get('name') or (v.get('caption') or '').split('\n')[0]).strip()
+    low = ' ' + name.lower() + ' '
+    out = []
+    ws = [w for w in re.findall(r'[A-Za-z]+', name) if len(w) >= 3 and w.lower() not in STOP]
+    if len(ws) >= 2: out.append('#' + ''.join(w.capitalize() for w in ws[:2]))
+    if ws and len(ws[0]) >= 4: out.append('#' + ws[0].capitalize())
+    for rx, tg in CATS:
+        if re.search(rx, low):
+            out += tg; break
+    out += ['#rekomendasishopee', '#ad']
+    seen, res = set(), []
+    for t in out:
+        if t.lower() not in seen: seen.add(t.lower()); res.append(t)
+    keep = res[:limit - 2] + ['#rekomendasishopee', '#ad']
+    return ' '.join(dict.fromkeys(keep))
+
+
 def caption(v, cfg):
     if v.get('link'):  # video produk
         ts = cfg.get('product_templates') or [{'description': '{caption}',
-                                               'hashtags': '#rekomendasi #rekomendasishopee #ad',
+                                               'hashtags': '{tagar}',
                                                'comment': 'Link produk (afiliasi): {link}'}]
     else:
         ts = cfg.get('templates') or ([cfg['template']] if cfg.get('template') else [])
         if not ts: return gemini(v, cfg)
     t = random.choice(ts)
-    return {k: str(t.get(k, '')).replace('{caption}', v.get('caption', '')).replace('{link}', v.get('link', ''))
+    return {k: str(t.get(k, '')).replace('{caption}', v.get('caption', '')).replace('{link}', v.get('link', '')).replace('{tagar}', product_tags(v) if v.get('link') else '')
             for k in ('description', 'hashtags', 'comment')}
 
 
